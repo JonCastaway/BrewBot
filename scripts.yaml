@@ -1,0 +1,99 @@
+brewbot_process_command:
+  alias: "🤖 BrewBot Process Command"
+  sequence:
+    - variables:
+        cmd: "{{ states('input_text.brewbot_command') | trim | lower }}"
+        profiles: "{{ states('input_text.brewbot_profiles') | from_json | default({}) }}"
+    
+    - choose:
+        # ADD: "add IPA 1.040 20 7 0 7 28"
+        - conditions: "{{ cmd.startswith('add ') }}"
+          sequence:
+            - variables:
+                parts: "{{ cmd.split()[1:] }}"
+                name: "{{ parts[0] | title }}"
+                new_brew: >-
+                  {{
+                    {
+                      name: {
+                        'og': parts[1]|float,
+                        'temp': parts[2]|float,
+                        'ferment': parts[3]|int,
+                        'hop': parts[4]|int,
+                        'crash': parts[5]|int,
+                        'tap': parts[6]|int
+                      }
+                    }
+                  }}
+            - service: input_text.set_value
+              target: input_text.brewbot_profiles
+              data:
+                value: "{{ (profiles | combine(new_brew) | to_json) }}"
+            - service: input_select.select_option
+              data:
+                entity_id: input_select.brewbot_current_brew
+                option: "{{ name }}"
+            - service: input_datetime.set_datetime
+              data:
+                entity_id: input_datetime.brew_start_time
+                datetime: "{{ now() }}"
+            - service: input_number.set_value
+              data:
+                entity_id: input_number.brew_original_gravity
+                value: "{{ parts[1]|float }}"
+            - service: input_number.set_value
+              data:
+                entity_id: input_number.brew_target_temperature
+                value: "{{ parts[2]|float }}"
+        
+        # DELETE: "delete IPA"
+        - conditions: "{{ cmd.startswith('delete ') }}"
+          sequence:
+            - variables:
+                name: "{{ cmd.split()[1] | title }}"
+                new_profiles: "{{ profiles | rejectkeys(name) | to_dict }}"
+            - service: input_text.set_value
+              target: input_text.brewbot_profiles
+              data:
+                value: "{{ new_profiles | to_json }}"
+            - condition: "{{ states('input_select.brewbot_current_brew') == name }}"
+              sequence:
+                - service: input_select.select_option
+                  data:
+                    entity_id: input_select.brewbot_current_brew
+                    option: "None"
+        
+        # SELECT: "select IPA"
+        - conditions: "{{ cmd.startswith('select ') }}"
+          sequence:
+            - service: input_select.select_option
+              data:
+                entity_id: input_select.brewbot_current_brew
+                option: "{{ cmd.split()[1] | title }}"
+            - delay: "00:00:01"
+            - service: input_number.set_value
+              data:
+                entity_id: input_number.brew_target_temperature
+                value: >-
+                  {{ (state_attr('input_text.brewbot_profiles','state') | from_json)[states('input_select.brewbot_current_brew')].temp }}
+            - service: input_number.set_value
+              data:
+                entity_id: input_number.brew_original_gravity
+                value: >-
+                  {{ (state_attr('input_text.brewbot_profiles','state') | from_json)[states('input_select.brewbot_current_brew')].og }}
+            - service: input_datetime.set_datetime
+              data:
+                entity_id: input_datetime.brew_start_time
+                datetime: "{{ now() }}"
+    
+    # REFRESH DROPDOWN OPTIONS
+    - service: input_select.set_options
+      data:
+        entity_id: input_select.brewbot_current_brew
+        options: '["None"] + {{ (states("input_text.brewbot_profiles") | from_json | keys | list) | tojson }}'
+    
+    # CLEAR COMMAND BOX
+    - service: input_text.set_value
+      target: input_text.brewbot_command
+      data:
+        value: ""
