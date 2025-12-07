@@ -1,0 +1,244 @@
+brewbot:
+  # 🤖 BrewBot Sensors (BrewSpy Integration)
+  rest:
+    - resource: "https://brewspy.app/api/json/<BREWSPY API KEY HERE>"
+      sensor:
+        - name: "BrewSpy Recipe Name"
+          unique_id: brewspy_recipe_name
+          value_template: "{{ value_json.name }}"
+        - name: "BrewSpy iSpindel Colour"
+          unique_id: brewspy_ispindel_colour
+          value_template: "{{ value_json.colour }}"
+        - name: "BrewSpy Timestamp"
+          unique_id: brewspy_timestamp
+          value_template: "{{ value_json.ts }}"
+        - name: "BrewSpy Gravity"
+          unique_id: brewspy_gravity
+          value_template: "{{ value_json.gravity | float }}"
+          unit_of_measurement: "SG"
+          state_class: measurement
+        - name: "BrewSpy Gravity Unit"
+          unique_id: brewspy_gravity_unit
+          value_template: "{{ value_json.gravity_unit }}"
+        - name: "BrewSpy Temperature"
+          unique_id: brewspy_temperature
+          value_template: "{{ value_json.temperature | float | round(2) }}"
+          unit_of_measurement: "°C"
+          state_class: measurement
+          device_class: temperature
+        - name: "BrewSpy Temperature Unit"
+          unique_id: brewspy_temperature_unit
+          value_template: "{{ value_json.temperature_unit }}"
+        - name: "BrewSpy Tilt Angle"
+          unique_id: brewspy_tilt_angle
+          value_template: "{{ value_json.tilt | float }}"
+          unit_of_measurement: "°"
+          state_class: measurement
+        - name: "BrewSpy Battery"
+          unique_id: brewspy_battery
+          value_template: "{{ value_json.battery | float | round(2) }}"
+          unit_of_measurement: "V"
+          state_class: measurement
+        - name: "BrewSpy RSSI"
+          unique_id: brewspy_rssi
+          value_template: "{{ value_json.rssi | int }}"
+          unit_of_measurement: "dBm"
+          state_class: measurement
+          device_class: signal_strength
+        - name: "BrewSpy Recipe"
+          unique_id: brewspy_recipe
+          value_template: "{{ value_json.recipe }}"
+        - name: "BrewSpy Batch"
+          unique_id: brewspy_batch
+          value_template: "{{ value_json.batch | int }}"
+          state_class: measurement
+        - name: "BrewSpy Alcohol"
+          unique_id: brewspy_alcohol
+          value_template: "{{ value_json.alcohol | float }}"
+          unit_of_measurement: "%"
+          state_class: measurement
+        - name: "BrewSpy Attenuation"
+          unique_id: brewspy_attenuation
+          value_template: "{{ value_json.attenuation | float }}"
+          unit_of_measurement: "%"
+          state_class: measurement
+
+  # 🧠 BrewBot Brain (Smart Sensors)
+  template:
+    - sensor:
+        - name: "Brew Status"
+          unique_id: brew_status
+          state: >
+            {% set sg_state = states('sensor.brewspy_gravity') %}
+            {% if sg_state in ['unavailable', 'unknown'] %}
+              Waiting for Data
+            {% else %}
+              {% set sg = sg_state | float(1.100) %}
+              {% if sg >= 1.028 %}
+                Early Fermentation
+              {% elif sg > 1.010 %}
+                Active Fermentation
+              {% elif sg <= 1.010 and sg >= 1.002 %}
+                Late Fermentation
+              {% elif sg < 1.002 and sg > 0 %}
+                Conditioning / Finished
+              {% else %}
+                Invalid Gravity Reading
+              {% endif %}
+            {% endif %}
+          icon: >
+            {% set sg_state = states('sensor.brewspy_gravity') %}
+            {% if sg_state in ['unavailable', 'unknown'] %}
+              mdi:clock-outline
+            {% else %}
+              {% set sg = sg_state | float(1.100) %}
+              {% if sg > 1.028 %}
+                mdi:yeast
+              {% elif sg > 1.010 %}
+                mdi:bubble
+              {% elif sg > 1.002 %}
+                mdi:beer
+              {% elif sg > 0 %}
+                mdi:check-bold
+              {% else %}
+                mdi:alert
+              {% endif %}
+            {% endif %}
+          availability: >
+            {{ states('sensor.brewspy_gravity') not in ['unavailable', 'unknown'] }}
+
+        - name: "BrewSpy Battery Percent"
+          unique_id: brewspy_battery_percent
+          state: >
+            {% set v = states('sensor.brewspy_battery') | float(0) %}
+            {{ (
+              0 if v <= 3.3
+              else 100 if v >= 4.2
+              else ((v - 3.3) / (4.2 - 3.3) * 100)
+            ) | round(0) }}
+          unit_of_measurement: "%"
+          state_class: measurement
+          device_class: battery
+
+        - name: "Estimated ABV"
+          unique_id: brewspy_estimated_abv
+          state: >
+            {% set og = states('input_number.brew_original_gravity') | float(1.0) %}
+            {% set sg = states('sensor.brewspy_gravity') | float(1.0) %}
+            {% if og > 1.0 and sg > 0.99 %}
+              {{ (og - sg) * 131.25 | round(2) }}
+            {% else %} 0.0 {% endif %}
+          unit_of_measurement: "%"
+          icon: mdi:alcohol
+
+        - name: "Brew Attenuation"
+          unique_id: brew_attenuation
+          state: >
+            {% set og = states('input_number.brew_original_gravity') | float(1.0) %}
+            {% set sg = states('sensor.brewspy_gravity') | float(1.0) %}
+            {% if og > 1.0 and sg > 0.99 %}
+              {{ ((og - sg) / (og - 1.0)) * 100 | round(1) }}
+            {% else %} 0 {% endif %}
+          unit_of_measurement: "%"
+          icon: mdi:percent
+
+        - name: "Days in Ferment"
+          unique_id: brew_days_in_ferment
+          state: >
+            {% set start = states('input_datetime.brew_start_time') %}
+            {% if start in ['unknown','unavailable'] %}
+              0
+            {% else %}
+              {% set s = as_datetime(start) %}
+              {{ ((now() - s).total_seconds() / 86400) | round(1) }}
+            {% endif %}
+          unit_of_measurement: "days"
+
+        - name: "Brew Estimated Finish Time"
+          unique_id: brew_estimated_finish_time
+          state: >
+            {% set start = states('input_datetime.brew_start_time') %}
+            {% if start in ['unknown','unavailable'] %}
+              unknown
+            {% else %}
+              {% set s = as_datetime(start) %}
+              {% set profile = state_attr('input_text.brewbot_profiles','state') | from_json %}
+              {% set brew = states('input_select.brewbot_current_brew') %}
+              {% set ferment_days = profile[brew].ferment | default(7) %}
+              {{ s + timedelta(days=ferment_days) }}
+            {% endif %}
+          device_class: timestamp
+
+        - name: "Next Brew Stage"
+          unique_id: next_brew_stage
+          state: >
+            {% set brew = states('input_select.brewbot_current_brew') %}
+            {% if brew == 'None' %}
+              Idle
+            {% else %}
+              {% set profile = state_attr('input_text.brewbot_profiles','state') | from_json %}
+              {% set data = profile[brew] %}
+              {% set days = (now() - states('input_datetime.brew_start_time') | as_datetime).days | int(0) %}
+              {% if days < data.ferment %}
+                Ferment {{ (data.ferment - days) }}d @{{ data.temp }}°C
+              {% elif data.hop > 0 and days < data.hop %}
+                Hop {{ (data.hop - days) }}d
+              {% elif days < data.crash %}
+                Crash {{ (data.crash - days) }}d
+              {% elif days < data.tap %}
+                Ready {{ (data.tap - days) }}d
+              {% else %}
+                Tap Ready!
+              {% endif %}
+            {% endif %}
+
+  # 🎛️ BrewBot Controls
+  input_text:
+    brewbot_profiles:
+      name: BrewBot Profiles JSON
+      max: 1024
+    brewbot_command:
+      name: BrewBot Command
+
+  input_select:
+    brewbot_current_brew:
+      name: BrewBot Active Brew
+      options: ["None"]
+
+  input_number:
+    brew_original_gravity:
+      name: Original Gravity
+      min: 1.000
+      max: 1.150
+      step: 0.001
+      unit_of_measurement: "SG"
+      mode: box
+      icon: mdi:water-percent
+
+    brew_target_temperature:
+      name: Target Temperature
+      min: 10.00
+      max: 22.00
+      step: 0.01
+      unit_of_measurement: "°C"
+      mode: box
+      icon: mdi:thermometer
+
+  input_datetime:
+    brew_start_time:
+      name: Brew Start Time
+      has_date: true
+      has_time: true
+      
+  input_boolean:
+    brew_box_visible:
+      name: Brew setup visible
+      initial: off
+      icon: mdi:beer
+
+  # 📊 BrewBot Recorder exclusions (optional)
+  recorder:
+    exclude:
+      entities:
+        - sensor.brewspy_timestamp
+        - sensor.brewspy_rssi
